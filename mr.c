@@ -50,7 +50,6 @@ void* reducer_thread(void* arg) {
 
   kvlist_t** hash_table = calloc(HASH_TABLE_SIZE, sizeof(kvlist_t*));
 
-
   for (unsigned long i = 0; i < HASH_TABLE_SIZE; i++) {
     hash_table[i] = kvlist_new();
   }
@@ -306,7 +305,7 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
     kvlist_extend(output, output_list);
   }
 
-  //kvlist_sort(output);
+  // kvlist_sort(output);
 
   for (unsigned long i = 0; i < num_mapper; i++) {
     kvlist_free(&map_phase[i].output);
