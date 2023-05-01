@@ -11,8 +11,8 @@
 #include "hash.h"
 #include "kvlist.h"
 #define UNUSED(x) (void)(x)
-#define HASH_TABLE_SIZE 1000
-#define MAX_KEY_LENGTH 256
+#define HASH_SIZE 1200
+#define KEY_LENGTH 275
 
 // Structs for map and reduce phase
 typedef struct {
@@ -22,7 +22,7 @@ typedef struct {
 
   kvlist_t* output;
 
-} map_thread_args;
+} map_struct;
 
 typedef struct {
   reducer_t reducer;
@@ -31,66 +31,80 @@ typedef struct {
 
   kvlist_t* output;
 
-} reducer_thread_args;
+} reducer_struct;
 
 // Thread Function for reduce phase
 
 void* reducer_thread(void* arg) {
-  reducer_thread_args* list1 = (reducer_thread_args*)arg;
+  // Making sure to make arg the correct type
+  reducer_struct* temp_reducer_struct = (reducer_struct*)arg;
 
-  reducer_t reducer = list1->reducer;
+  // getting values from arg and assigning them
+  reducer_t reducer = temp_reducer_struct->reducer;
 
-  kvlist_t* input = list1->input;
+  kvlist_t* input = temp_reducer_struct->input;
 
-  kvlist_t* output = list1->output;
+  kvlist_t* output = temp_reducer_struct->output;
 
+  // Setting up iterator
   kvlist_iterator_t* itor = kvlist_iterator_new(input);
 
   kvpair_t* pair;
 
-  kvlist_t** hash_table = calloc(HASH_TABLE_SIZE, sizeof(kvlist_t*));
+  // hash table so we can identify pairs by key
+  kvlist_t** hash_table = calloc(HASH_SIZE, sizeof(kvlist_t*));
 
-  for (unsigned long i = 0; i < HASH_TABLE_SIZE; i++) {
+  // here we initialize each entry with a new empty list
+  for (unsigned long i = 0; i < HASH_SIZE; i++) {
     hash_table[i] = kvlist_new();
   }
 
+  // looping through all pairs in the input list
   while ((pair = kvlist_iterator_next(itor)) != NULL) {
-    unsigned long hash_val = hash(pair->key);
+    // Use hash function to get hash value
+    unsigned long hash_value = hash(pair->key);
 
-    kvlist_t* list = hash_table[hash_val % HASH_TABLE_SIZE];
+    // get hash table entry for the key we are currenly on
+    kvlist_t* list = hash_table[hash_value % HASH_SIZE];
 
+    // append copy of pair to hash table entry
     kvlist_append(list, kvpair_clone(pair));
   }
-
-  for (unsigned long i = 0; i < HASH_TABLE_SIZE; i++) {
+  // loop through all entries in hash table
+  for (unsigned long i = 0; i < HASH_SIZE; i++) {
+    // get and sort each hash table entry
     kvlist_t* list = hash_table[i];
 
     kvlist_sort(list);
 
-    char current_key[MAX_KEY_LENGTH];
+    // setting up variables for our current key and current list to pass to
+    // reducer
+
+    char current_key[KEY_LENGTH];
 
     kvlist_t* current_list = NULL;
 
     kvlist_iterator_t* itor = kvlist_iterator_new(list);
-
+    // looping through pairs in the sorted list
     while ((pair = kvlist_iterator_next(itor)) != NULL) {
+      // see if current key is different from the key we are on
       if (current_list == NULL || strcmp(pair->key, current_key) != 0) {
-        // Start a new sublist for the new key.
+        // new sublist for the new key.
 
         if (current_list != NULL) {
           // Call reducer function for the previous key.
 
           reducer(current_key, current_list, output);
-
+          // free memory
           kvlist_free(&current_list);
         }
-
-        strncpy(current_key, pair->key, MAX_KEY_LENGTH);
-        current_key[MAX_KEY_LENGTH - 1] = '\0';
+        // reset for new key and value list
+        strncpy(current_key, pair->key, KEY_LENGTH);
+        current_key[KEY_LENGTH - 1] = '\0';
 
         current_list = kvlist_new();
       }
-
+      // append pair to current_list
       kvlist_append(current_list, kvpair_clone(pair));
     }
 
@@ -104,39 +118,43 @@ void* reducer_thread(void* arg) {
 
     kvlist_iterator_free(&itor);
   }
-
-  for (unsigned long i = 0; i < HASH_TABLE_SIZE; i++) {
+  // free memory for the lists in hash table
+  for (unsigned long i = 0; i < HASH_SIZE; i++) {
     kvlist_free(&hash_table[i]);
   }
 
   free(hash_table);
 
   kvlist_iterator_free(&itor);
-
+  // exiting the thread
   pthread_exit(NULL);
 }
 
 // Thread function for map phase
 
 void* map_thread(void* arg) {
-  map_thread_args* args = (map_thread_args*)arg;
+  // Making sure to make arg the correct type
+  map_struct* temp_mapper_struct = (map_struct*)arg;
 
-  mapper_t mapper = args->mapper;
+  // getting values from arg and assigning them
 
-  kvlist_t* input = args->input;
+  mapper_t mapper = temp_mapper_struct->mapper;
 
-  kvlist_t* output = args->output;
+  kvlist_t* input = temp_mapper_struct->input;
+
+  kvlist_t* output = temp_mapper_struct->output;
+  // creating iterator to iterate over input
 
   kvlist_iterator_t* itor = kvlist_iterator_new(input);
 
   kvpair_t* pair;
-
+  // loop through the whole list and call mapper on each pair in the list
   while ((pair = kvlist_iterator_next(itor)) != NULL) {
     mapper(pair, output);
   }
-
+  // free memory
   kvlist_iterator_free(&itor);
-
+  // exit the thread
   pthread_exit(NULL);
 }
 
@@ -147,12 +165,12 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
 
   // malloc mapper input lists
 
-  // split phase
+  // SPLIT PHASE
 
   kvlist_iterator_t* itor = kvlist_iterator_new(input);
 
   int length = 0;
-
+  // looping over to calculate the length of the list
   while (true) {
     kvpair_t* pair = kvlist_iterator_next(itor);
 
@@ -172,7 +190,7 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
   kvlist_iterator_t* itor1 = kvlist_iterator_new(input);
 
   unsigned long list_number = 0;
-
+  // round robin approach to split into smaller lists
   while (true) {
     kvpair_t* pair = kvlist_iterator_next(itor1);
 
@@ -195,67 +213,66 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
 
   // MAP PHASE
 
-  //  Create threads
-
-  pthread_t threads[num_mapper];
-
-  map_thread_args* map_phase = malloc(num_mapper * sizeof(map_thread_args));
-
+  //  Create map_threads
+  // here we make array of threads
+  pthread_t map_threads[num_mapper];
+  // here we make array of structs so we can access info later
+  map_struct* map_phase = malloc(num_mapper * sizeof(map_struct));
+  // here we initialize each struct
   for (unsigned long i = 0; i < num_mapper; i++) {
     map_phase[i].mapper = mapper;
 
     map_phase[i].input = smaller_lists[i];
 
     map_phase[i].output = kvlist_new();
-
-    pthread_create(&threads[i], NULL, map_thread, &map_phase[i]);
+    // here we create a new thread and pass in the struct as the argument
+    pthread_create(&map_threads[i], NULL, map_thread, &map_phase[i]);
   }
 
-  // Wait for threads to finish
+  // Here we wait for map_threads to finish
 
   for (unsigned long i = 0; i < num_mapper; i++) {
-    pthread_join(threads[i], NULL);
+    pthread_join(map_threads[i], NULL);
   }
 
   // SHUFFLE PHASE
 
   // num_reducer lists
-
+  // create array of kvlist pointers
   kvlist_t** reducer_lists = malloc(num_reducer * sizeof(kvlist_t*));
-
+  // make sure to create new kvlist for each reducer
   for (unsigned long i = 0; i < num_reducer; i++) {
     reducer_lists[i] = kvlist_new();
   }
 
-  // Create a hash table to map each key to a reducer index
+  // hash table to map each key to a reducer index
 
-  unsigned long* key_to_reducer =
-
-      calloc(HASH_TABLE_SIZE, sizeof(unsigned long));
-
+  unsigned long* key_hash_table = calloc(HASH_SIZE, sizeof(unsigned long));
+  // iterating over each map output
   for (unsigned long i = 0; i < num_mapper; i++) {
-    map_thread_args* tmp = &map_phase[i];
+    map_struct* tmp = &map_phase[i];
 
-    map_thread_args* args = tmp;
+    map_struct* temp_mapper_struct = tmp;
 
-    kvlist_iterator_t* itor = kvlist_iterator_new(args->output);
+    kvlist_iterator_t* itor = kvlist_iterator_new(temp_mapper_struct->output);
 
     kvpair_t* pair;
-
+    // loop through each pair in current output list
     while ((pair = kvlist_iterator_next(itor)) != NULL) {
-      unsigned long hash_val = hash(pair->key) % HASH_TABLE_SIZE;
+      // compute a hash value and map it to index
+      unsigned long hash_value = hash(pair->key) % HASH_SIZE;
 
-      if (key_to_reducer[hash_val] == 0) {
-        // If the key has not been mapped to a reducer yet, map it to the
+      if (key_hash_table[hash_value] == 0) {
+        // If the key not been mapped to a reducer yet, it is mapped to the
 
         // current reducer
 
-        key_to_reducer[hash_val] = hash_val % num_reducer;
+        key_hash_table[hash_value] = hash_value % num_reducer;
       }
 
-      // Append the pair to the reducer assigned to the key
+      // here we append the pair to the reducer assigned to the key
 
-      kvlist_append(reducer_lists[key_to_reducer[hash_val]],
+      kvlist_append(reducer_lists[key_hash_table[hash_value]],
 
                     kvpair_clone(pair));
     }
@@ -263,33 +280,33 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
     kvlist_iterator_free(&itor);
   }
 
-  // Free the key to reducer hash table
+  // Free memory
 
-  free(key_to_reducer);
-
+  free(key_hash_table);
+  // sort reducer lists
   for (size_t i = 0; i < num_reducer; i++) {
     kvlist_sort(reducer_lists[i]);
   }
 
   // REDUCE PHASE
-
+  // create array of threads for reduce phase
   pthread_t reduce_threads[num_reducer];
+  // here we make another array of structs
+  reducer_struct* reduce_phase =
 
-  reducer_thread_args* reduce_phase =
-
-      malloc(num_reducer * sizeof(reducer_thread_args));
-
+      malloc(num_reducer * sizeof(reducer_struct));
+  // here we initialize each struct
   for (unsigned long i = 0; i < num_reducer; i++) {
     reduce_phase[i].reducer = reducer;
 
     reduce_phase[i].input = reducer_lists[i];
 
     reduce_phase[i].output = kvlist_new();
-
+    // create new thread and pass in struct as the argument
     pthread_create(&reduce_threads[i], NULL, reducer_thread, &reduce_phase[i]);
   }
 
-  // Wait for threads to finish
+  // here we wait for map_threads to finish
 
   for (unsigned long i = 0; i < num_reducer; i++) {
     pthread_join(reduce_threads[i], NULL);
@@ -297,7 +314,7 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
 
   // OUTPUT PHASE
 
-  // Append all output lists to `output`
+  // Appending all the lists to our final output list
 
   for (size_t i = 0; i < num_reducer; i++) {
     kvlist_t* output_list = reduce_phase[i].output;
@@ -306,6 +323,8 @@ void map_reduce(mapper_t mapper, size_t num_mapper, reducer_t reducer,
   }
 
   // kvlist_sort(output);
+
+  // FREEING MEMORY HERE
 
   for (unsigned long i = 0; i < num_mapper; i++) {
     kvlist_free(&map_phase[i].output);
